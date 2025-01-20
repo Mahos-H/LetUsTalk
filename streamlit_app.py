@@ -10,10 +10,8 @@ from tensorflow.keras.preprocessing.sequence import pad_sequences
 from nltk.corpus import stopwords
 from nltk.stem.wordnet import WordNetLemmatizer
 import nltk
+import ssl
 
-nltk.download('wordnet')  # For lemmatization
-nltk.download('stopwords')  # For filtering stopwords
-nltk.download('omw-1.4')  # Optional: For better lemmatization results
 
 # ----------------------------- #
 # 1) Define AttentionLayer
@@ -72,8 +70,7 @@ def load_tokenizer():
 # ----------------------------- #
 # 3) Text Preprocessing
 # ----------------------------- #
-stop_words = set(stopwords.words("english"))
-lemmatizer = WordNetLemmatizer()
+
 
 def advanced_text_cleaning(text):
     text = text.lower()
@@ -100,6 +97,33 @@ def predict_sentiment(text, model, tokenizer, max_length=50):
 
 st.set_page_config(page_title="Sentiment Analyzer", page_icon="💬", layout="centered")
 
+try:
+    _create_unverified_https_context = ssl._create_unverified_context
+except AttributeError:
+    pass
+else:
+    ssl._create_default_https_context = _create_unverified_https_context
+
+# Download required NLTK data with error handling
+@st.cache_resource
+def download_nltk_data():
+    try:
+        nltk.download('stopwords', quiet=True)
+        nltk.download('wordnet', quiet=True)
+        nltk.download('omw-1.4', quiet=True)
+        return True
+    except Exception as e:
+        st.error(f"Error downloading NLTK data: {str(e)}")
+        return False
+
+# Call this before accessing any NLTK resources
+if not download_nltk_data():
+    st.error("Failed to download required NLTK data. Please try again.")
+    st.stop()
+
+# Now initialize stopwords and lemmatizer
+stop_words = set(nltk.corpus.stopwords.words("english"))
+lemmatizer = nltk.stem.WordNetLemmatizer()
 # Custom CSS for styling
 st.markdown(
     """
@@ -150,7 +174,7 @@ st.markdown(
 .bubble-part:nth-child(2) {
     width: 35px;
     height: 35px;
-    background: #4ECDC4;  /* Turquoise */
+    background: #FFDF22;  /* Turquoise */
     top: 0;
     right: 0;
     animation: bubble-animation 2s ease infinite 0.5s;
@@ -168,7 +192,7 @@ st.markdown(
 .bubble-part:nth-child(4) {
     width: 25px;
     height: 25px;
-    background: #96CEB4;  /* Mint Green */
+    background: #228B22;  /* Mint Green */
     bottom: -10px;
     left: 20px;
     transform: rotate(45deg);
@@ -212,36 +236,45 @@ st.markdown(
         opacity: 0;
     }
 }
-
-    /* Speaking emoji formation */
-    .emoji-formation {
-        position: absolute;
-        font-size: 48px;
-        opacity: 0;
-        animation: form-emoji 1s ease forwards;
-        animation-delay: 4s;
-    }
-
-    @keyframes form-emoji {
-        0% { opacity: 0; transform: scale(0); }
-        100% { opacity: 1; transform: scale(1); }
-    }
-
-    /* Random emoji pop-up animation */
-    .emoji-container {
+.emoji-container {
         position: fixed;
+        top: 0;
+        left: 0;
         width: 100vw;
         height: 100vh;
         pointer-events: none;
         z-index: 1000;
+        overflow: hidden;
     }
 
     .floating-emoji {
         position: absolute;
         font-size: 24px;
-        animation: pop-and-float 2s ease-out forwards;
         opacity: 0;
+        bottom: -50px;  /* Start below the viewport */
+        animation: float-up 3s ease-out forwards;
+        transform-origin: center center;
     }
+
+    @keyframes float-up {
+        0% {
+            transform: translateY(0) rotate(0deg);
+            opacity: 0;
+        }
+        10% {
+            opacity: 1;
+        }
+        100% {
+            transform: translateY(-120vh) rotate(359deg);  /* Move beyond viewport */
+            opacity: 0;
+        }
+    }
+
+    /* Add this new class for staggered animations */
+    .staggered {
+        animation-play-state: paused;
+    }
+    
 
     @keyframes pop-and-float {
         0% {
@@ -426,9 +459,13 @@ if not st.session_state.intro_shown:
 st.markdown('<h1 class="title">Let Us Talk...</h1>', unsafe_allow_html=True)
 
 def generate_emoji_style():
-    x = random.randint(0, 100)
-    delay = random.uniform(0, 1)
-    return f'left: {x}vw; animation-delay: {delay}s;'
+    x = random.randint(0, 90)  # Limit to 90 to prevent right-side cutoff
+    delay = random.uniform(0, 1.5)  # Increased delay variation
+    return f'''
+        left: {x}vw;
+        animation-delay: {delay}s;
+        animation-duration: {random.uniform(2.5, 3.5)}s;
+    '''
 
 # Load model and tokenizer
 model = load_model()
@@ -439,7 +476,6 @@ st.title("Sentiment Analyzer")
 st.markdown("### Enter your text below to analyze sentiment:")
 
 user_input = st.text_area("Input Text", placeholder="Type something...", max_chars=500)
-
 if st.button("Analyze Sentiment"):
     if user_input.strip():
         sentiment = predict_sentiment(user_input, model, tokenizer)
@@ -449,10 +485,12 @@ if st.button("Analyze Sentiment"):
             "Negative": ["😞", "😢", "😡", "💔", "🌧", "🌩", "⛈", "😠", "👎", "😭", "😨", "⚡", "😔", "🙁", "😿"]
         }
 
-
-        # Create random floating emojis
+        # Generate unique container ID for this analysis
+        container_id = f"emoji-container-{random.randint(1000, 9999)}"
+        
+        # Create emojis with staggered animation
         emojis = ""
-        for _ in range(15):  # Create 15 random emojis
+        for i in range(15):
             emoji = random.choice(emoji_map[sentiment])
             style = generate_emoji_style()
             emojis += f'<div class="floating-emoji" style="{style}">{emoji}</div>'
@@ -461,14 +499,24 @@ if st.button("Analyze Sentiment"):
             f'''
             <div class="sentiment-output">
                 <p class="sentiment-{sentiment.lower()}">
-                    <strong>Sentiment Found:</strong> {sentiment} {emoji_map[sentiment][0]}
+                    <strong>Sentiment Found:</strong> {sentiment} {random.choice(emoji_map[sentiment])}
                 </p>
             </div>
-            <div class="emoji-container">
+            <div id="{container_id}" class="emoji-container">
                 {emojis}
             </div>
+            <script>
+                // Force animation restart by removing and re-adding the container
+                setTimeout(() => {{
+                    const container = document.getElementById("{container_id}");
+                    const parent = container.parentNode;
+                    const newContainer = container.cloneNode(true);
+                    parent.removeChild(container);
+                    parent.appendChild(newContainer);
+                }}, 100);
+            </script>
             ''',
             unsafe_allow_html=True
         )
     else:
-        st.warning("Please enter some text!")
+        st.warning("Please enter some text!")
